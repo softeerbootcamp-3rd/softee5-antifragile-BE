@@ -7,10 +7,7 @@ import warmingUp.antifragile.car.dto.RecommendCarDto;
 import warmingUp.antifragile.car.dto.RecommendDto;
 import warmingUp.antifragile.car.repository.ModelRepository;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
+import java.util.*;
 
 @RestController
 public class CarController {
@@ -99,108 +96,129 @@ public class CarController {
     // 인원수 -> 예산 범위 -> 우선 고려 사항 점수 -> 주요 이용 목적
     @PostMapping("/recommend")
     public ArrayList<RecommendCarDto> recommend(@RequestBody RecommendDto recommendDto) {
-        Model model1 = null;       // 1순위
-        Model model2 = null;       // 2순위
 
-        Integer people = recommendDto.getAdultsCount() + recommendDto.getKidsCount();
+
+        List<Model> models = modelRepository.findAll();
         Integer minPrice = recommendDto.getMinPrice();
+        Integer maxPrice = recommendDto.getMaxPrice();
         if(minPrice == null)
             minPrice = 0;
-        Integer maxPrice = recommendDto.getMaxPrice();
         if(maxPrice == null)
-            maxPrice = Integer.MAX_VALUE;
-        // 해당 인원수 이상, 예산 범위 내의 차량 목록 먼저 추리기
-        ArrayList<Model> list = modelRepository.findByPeopleGreaterThanEqualAndPriceBetween(people, minPrice, maxPrice);
+            maxPrice = 6000;
 
-        // 만약 해당 범위 내 차량이 2개 이상일 경우 정렬하여 1,2순위 저장
-        // 인원수 적은 순 - 우선 고려 사항 점수 높은 순 - 주요 이용 목적 점수 높은 순 - 저렴한 순 - 이름 순
-        if(list.size() >= 2) {
-            list = sortSmallPeople(recommendDto.getPriority1(), recommendDto.getPriority2(),
-                    recommendDto.getPurpose(), list);
-            model1 = list.get(0);
-            model2 = list.get(1);
+        int wantedPrice = (minPrice + maxPrice)/2;
+        int wantedPeaple = recommendDto.getAdultsCount()+recommendDto.getKidsCount();
+
+        for(Model m: models){
+            //가격점수 클수록 나쁨
+            Integer score = Math.abs((m.getPrice()-wantedPrice)/100 /5);
+            m.setPrice(score);
+            //인구수 점수 클수록 나쁨
+            Integer peopleScore = Math.abs(m.getPeople()-wantedPeaple);
+            m.setPeople(peopleScore);
+
+            //항목별 점수
+            Long cnt = m.getReviewCount();
+            m.setMpgSum(m.getMpgSum()/cnt/3);
+            m.setSafeSum(m.getSafeSum()/cnt/3);
+            m.setSpaceSum(m.getSpaceSum()/cnt/3);
+            m.setDesignSum(m.getDesignSum()/cnt/3);
+            m.setFunSum(m.getFunSum()/cnt/3);
+
+            //우선순위 퍼센테지화
+            m.setWorkCount(m.getWorkCount()*100/cnt);
+            m.setDriveCount(m.getDriveCount()*100/cnt);
+            m.setLongCount(m.getLongCount()*100/cnt);
+            m.setKidsCount(m.getKidsCount()*100/cnt);
+            m.setTravelCount(m.getTravelCount()*100/cnt);
+
         }
 
-        // 만약 해당 범위 내 차량이 0개일 경우 -> 예산 범위 배제, 인원수만 고려하여 다시 뽑기
-        else if(list.size() == 0) {
-            list = modelRepository.findByPeopleGreaterThanEqual(people);
-            // 해당 범위 내 차량이 2개 이상일 경우 -> 정렬
-            if(list.size() >= 2) {
-                list = sortSmallPeople(recommendDto.getPriority1(), recommendDto.getPriority2(),
-                        recommendDto.getPurpose(), list);
-                model1 = list.get(0);
-                model2 = list.get(1);
+        //가격별 정렬
+        //인구수 정렬
+
+        models.sort(((o1, o2) -> o2.getPrice()-o1.getPrice()));
+        models.sort(((o1, o2) -> o2.getPeople()-o1.getPeople()));
+
+        String p1 = recommendDto.getPriority1();
+        String p2 = recommendDto.getPriority2();
+
+        //우선순위별 정렬
+        for(Model m: models){
+            Long k = 0L;
+            if(p1.equals("연비")){
+                k += m.getMpgSum();
             }
-            else {
-                // 전체 모델 대상
-                list = modelRepository.findAll();
-                // 선택한 인원수가 최대 포용 인원보다 많아서 1개 또는 0개가 나온 경우
-                // -> 인원수 많은 순 - 우선 고려 사항 점수 높은 순 - 주요 이용 목적 점수 높은 순 - 저렴한 순 - 이름 순
-                if(people >= 9) {
-                    list = sortBigPeople(recommendDto.getPriority1(), recommendDto.getPriority2(),
-                            recommendDto.getPurpose(), list);
-                    model1 = list.get(0);
-                    model2 = list.get(1);
-                }
-                // 선택한 인원수가 최소 포용 인원보다 적어서 1개 또는 0개가 나온 경우
-                // -> 인원수 적은 순 - 우선 고려 사항 점수 높은 순 - 주요 이용 목적 점수 높은 순 - 저렴한 순 - 이름 순
-                else {
-                    list = sortSmallPeople(recommendDto.getPriority1(), recommendDto.getPriority2(),
-                            recommendDto.getPurpose(), list);
-                    model1 = list.get(0);
-                    model2 = list.get(1);
-                }
+            else if(p1.equals("승차감 및 안전")){
+                k+= m.getSafeSum();
             }
+            else if(p1.equals("넓은 공")){
+                k+= m.getSpaceSum();
+            }else if(p1.equals("디자인")){
+                k+= m.getDesignSum();
+            }else if(p1.equals("운전 재미")){
+                k+= m.getFunSum();
+            }
+
+            if(p2.equals("연비")){
+                k += m.getMpgSum();
+            }
+            else if(p2.equals("승차감 및 안전")){
+                k+= m.getSafeSum();
+            }
+            else if(p2.equals("넓은 공")){
+                k+= m.getSpaceSum();
+            }else if(p2.equals("디자인")){
+                k+= m.getDesignSum();
+            }else if(p2.equals("운전 재미")){
+                k+= m.getFunSum();
+            }
+            m.setReviewCount(k);
         }
+        models.sort((o1, o2) -> Long.compare(o2.getReviewCount(), o1.getReviewCount()));
 
-        // 만약 해당 범위 내 차량이 1개일 경우 -> 1순위 확정, 2순위 추리기 -> 예산 범위 배제, 인원수만 고려하여 다시 뽑기
-        else {
-            model1 = list.get(0);
-            list = modelRepository.findByPeopleGreaterThanEqual(people);
-            // 해당 범위 내 차량이 1개일 경우, 이미 1순위로 선택한 모델이므로 다시 뽑아야함
-            // 이 경우 인원수가 최대 포용 인원수보다 크거나 같은 경우이므로 전체 모델 대상으로
-            // 인원수 많은 순 - 우선 고려 사항 점수 높은 순 - 주요 이용 목적 점수 높은 순 - 저렴한 순 - 이름 순 정렬
-            if(list.size() <= 1) {
-                list = modelRepository.findAll();
-                list = sortBigPeople(recommendDto.getPriority1(), recommendDto.getPriority2(),
-                        recommendDto.getPurpose(), list);
-                for(int i = 0; i < list.size(); i++) {
-                    if(!list.get(i).getId().equals(model1.getId())) {
-                        model2 = list.get(i);
-                        break;
-                    }
-                }
-            }
-            // 해당 범위 내 차량이 2개 이상일 경우 -> 정렬
-            else if(list.size() >= 2) {
-                list = sortSmallPeople(recommendDto.getPriority1(), recommendDto.getPriority2(),
-                        recommendDto.getPurpose(), list);
-                for(int i = 0; i < list.size(); i++) {
-                    if(!list.get(i).getId().equals(model1.getId())) {
-                        model2 = list.get(i);
-                        break;
-                    }
-                }
-            }
-        }
+        //이용목적정렬
 
-        String m1Pri = model1.bestPriority();
-        int m1PriPercent = (int)model1.priorityPercent(m1Pri);
-        String m2Pri = model2.bestPriority();
-        int m2PriPercent = (int)model2.priorityPercent(m2Pri);
-        String m1Pur = model1.bestPurpose();
-        int m1PurPercent = (int)model1.purposePercent(m1Pur);
-        String m2Pur = model2.bestPurpose();
-        int m2PurPercent = (int)model2.purposePercent(m2Pur);
+        String purpose = recommendDto.getPurpose();
+        if (purpose.equals("출퇴근용"))
+            models.sort((o1, o2) -> Long.compare(o2.getWorkCount(), o1.getWorkCount()));
 
-        RecommendCarDto car1 = new RecommendCarDto(model1.getId(), model1.getName(), model1.getDescription(),
-                model1.getInformationURL(), model1.getPrice(), m1Pri, m1PriPercent, m1Pur, m1PurPercent);
-        RecommendCarDto car2 = new RecommendCarDto(model2.getId(), model2.getName(), model2.getDescription(),
-                model2.getInformationURL(), model2.getPrice(), m2Pri, m2PriPercent, m2Pur, m2PurPercent);
+        else if(purpose.equals("장거리 운전"))
+            models.sort((o1, o2) -> Long.compare(o2.getLongCount(), o1.getLongCount()));
+        else if(purpose.equals("드라이브"))
+            models.sort((o1, o2) -> Long.compare(o2.getDriveCount(), o1.getDriveCount()));
+        else if(purpose.equals("주말여행"))
+            models.sort((o1, o2) -> Long.compare(o2.getTravelCount(), o1.getTravelCount()));
+        else if(purpose.equals("자녀와 함께"))
+            models.sort((o1, o2) -> Long.compare(o2.getKidsCount(), o1.getKidsCount()));
+
+
+        Long firstId = models.get(0).getId();
+        Long secondId = models.get(1).getId();
+        Model m1 = modelRepository.findById(firstId).orElse(null);
+        Model m2 = modelRepository.findById(secondId).orElse(null);
+
+        String m1Pri = m1.bestPriority();
+        int m1PriPercent = (int)m1.priorityPercent(m1Pri);
+        String m2Pri = m2.bestPriority();
+        int m2PriPercent = (int)m2.priorityPercent(m2Pri);
+        String m1Pur = m1.bestPurpose();
+        int m1PurPercent = (int)m1.purposePercent(m1Pur);
+        String m2Pur = m2.bestPurpose();
+        int m2PurPercent = (int)m2.purposePercent(m2Pur);
+
+
+        RecommendCarDto car1 = new RecommendCarDto(m1.getId(), m1.getName(), m1.getDescription(),
+                m1.getInformationURL(), m1.getPrice(), m1Pri, m1PriPercent, m1Pur, m1PurPercent);
+        RecommendCarDto car2 = new RecommendCarDto(m2.getId(), m2.getName(), m2.getDescription(),
+                m2.getInformationURL(), m2.getPrice(), m2Pri, m2PriPercent, m2Pur, m2PurPercent);
         ArrayList<RecommendCarDto> result = new ArrayList<>();
         result.add(car1);
         result.add(car2);
         return result;
+
+
+
     }
 
     // ArrayList<Model> 정렬 함수
